@@ -31,9 +31,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install Pillow
+          pip install Pillow groq
 
       - name: Generate horror video
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: python main.py
 
       - name: Save generated video
