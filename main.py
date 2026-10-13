@@ -1,66 +1,80 @@
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
 from groq import Groq
 from PIL import Image, ImageDraw, ImageFont
 
-# API-key ophalen uit GitHub Secrets
 api_key = os.environ.get("GROQ_API_KEY")
 
 if not api_key:
-    raise RuntimeError(
-        "GROQ_API_KEY ontbreekt. Controleer GitHub Secrets."
-    )
+    raise RuntimeError("GROQ_API_KEY ontbreekt in GitHub Secrets.")
 
 client = Groq(api_key=api_key)
 
-# Genereer een nieuw horrorverhaal
+print("Een nieuw horrorverhaal maken...")
+
 response = client.chat.completions.create(
     model="openai/gpt-oss-120b",
     messages=[
         {
             "role": "system",
             "content": (
-                "Write original suspenseful horror stories suitable "
-                "for a general audience. No graphic violence. "
-                "Return exactly six short sentences, one per line. "
-                "Do not number them. End with a surprising twist."
+                "Write an original suspenseful horror story in English. "
+                "Suitable for a general audience, with no graphic violence. "
+                "Return exactly six short sentences. Put each sentence "
+                "on its own line. Do not number the sentences."
             )
         },
         {
             "role": "user",
             "content": (
-                "Create a completely new short horror story in English. "
-                "Make it suspenseful and end with an unexpected twist. "
-                "Return exactly six lines."
+                "Write a new horror story with a creepy atmosphere "
+                "and an unexpected twist at the end. Exactly six sentences."
             )
         }
     ],
     temperature=1.0,
-    max_tokens=300
+    max_tokens=400
 )
 
-story_text = response.choices[0].message.content.strip()
+story_text = response.choices[0].message.content or ""
 
+print("Antwoord ontvangen:")
+print(repr(story_text))
+
+# Eerst proberen de regels rechtstreeks te gebruiken
 STORY = [
-    line.strip().lstrip("0123456789.-) ").strip('"')
+    line.strip()
     for line in story_text.splitlines()
     if line.strip()
 ]
 
+# Als het verhaal als één alinea terugkomt, splits het in zinnen
+if len(STORY) != 6:
+    cleaned = re.sub(r"\s+", " ", story_text).strip()
+    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
+    STORY = [s.strip() for s in sentences if s.strip()]
+
+# Verwijder eventuele nummering
+STORY = [
+    re.sub(r"^\s*\d+[\.\)\-:]\s*", "", sentence).strip()
+    for sentence in STORY
+]
+STORY = [sentence for sentence in STORY if sentence]
+
 if len(STORY) != 6:
     raise RuntimeError(
-        f"Het verhaal heeft {len(STORY)} regels in plaats van 6. "
-        "Probeer de workflow opnieuw."
+        f"Het model gaf {len(STORY)} zinnen in plaats van 6. "
+        "Bekijk 'Antwoord ontvangen' in de Actions-log."
     )
 
-print("Nieuw horrorverhaal:")
+print("Verhaal:")
 for sentence in STORY:
     print(sentence)
 
-# Video-instellingen
 OUT = Path("horror-short.mp4")
 FRAMES = Path("frames")
 FRAMES.mkdir(exist_ok=True)
@@ -80,7 +94,6 @@ for i, sentence in enumerate(STORY):
 
     draw.ellipse((120, 180, 600, 660), fill=(28, 5, 12))
 
-    # Tekst automatisch verdelen over regels
     words = sentence.split()
     lines = []
     line = ""
@@ -122,7 +135,8 @@ for i, sentence in enumerate(STORY):
 
     img.save(FRAMES / f"{i:03d}.png")
 
-# Video maken
+print("Video renderen...")
+
 subprocess.run([
     "ffmpeg", "-y",
     "-framerate", "1/4",
