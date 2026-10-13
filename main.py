@@ -7,6 +7,7 @@ from pathlib import Path
 from groq import Groq
 from PIL import Image, ImageDraw, ImageFont
 
+# API-key ophalen
 api_key = os.environ.get("GROQ_API_KEY")
 
 if not api_key:
@@ -14,7 +15,8 @@ if not api_key:
 
 client = Groq(api_key=api_key)
 
-print("Een nieuw horrorverhaal maken...")
+# Maak een langer horrorverhaal met 12 scènes
+print("Een horrorverhaal van ongeveer 1 minuut maken...")
 
 response = client.chat.completions.create(
     model="openai/gpt-oss-120b",
@@ -22,41 +24,46 @@ response = client.chat.completions.create(
         {
             "role": "system",
             "content": (
-                "Write an original suspenseful horror story in English. "
+                "Write original suspenseful horror stories in English. "
                 "Suitable for a general audience, with no graphic violence. "
-                "Return exactly six short sentences. Put each sentence "
-                "on its own line. Do not number the sentences."
+                "Return exactly 12 short sentences. Each sentence must be "
+                "on its own line. Do not number them. Build suspense slowly "
+                "and finish with a surprising twist."
             )
         },
         {
             "role": "user",
             "content": (
-                "Write a new horror story with a creepy atmosphere "
-                "and an unexpected twist at the end. Exactly six sentences."
+                "Write a completely new horror story for a one-minute "
+                "vertical video. Include an intriguing opening, creepy "
+                "events, increasing suspense, and a clever unexpected ending. "
+                "Return exactly 12 short sentences, one per line."
             )
         }
     ],
     temperature=1.0,
-    max_tokens=400
+    max_tokens=700
 )
 
 story_text = response.choices[0].message.content or ""
-
 print("Antwoord ontvangen:")
-print(repr(story_text))
+print(story_text)
 
-# Eerst proberen de regels rechtstreeks te gebruiken
+# Verwerk het verhaal
 STORY = [
     line.strip()
     for line in story_text.splitlines()
     if line.strip()
 ]
 
-# Als het verhaal als één alinea terugkomt, splits het in zinnen
-if len(STORY) != 6:
+# Als het model één alinea terugstuurt, splits die in zinnen
+if len(STORY) != 12:
     cleaned = re.sub(r"\s+", " ", story_text).strip()
-    sentences = re.split(r'(?<=[.!?])\s+', cleaned)
-    STORY = [s.strip() for s in sentences if s.strip()]
+    STORY = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", cleaned)
+        if sentence.strip()
+    ]
 
 # Verwijder eventuele nummering
 STORY = [
@@ -65,16 +72,17 @@ STORY = [
 ]
 STORY = [sentence for sentence in STORY if sentence]
 
-if len(STORY) != 6:
+if len(STORY) != 12:
     raise RuntimeError(
-        f"Het model gaf {len(STORY)} zinnen in plaats van 6. "
-        "Bekijk 'Antwoord ontvangen' in de Actions-log."
+        f"Het verhaal heeft {len(STORY)} zinnen in plaats van 12. "
+        "Bekijk de Actions-log."
     )
 
-print("Verhaal:")
+print("Verhaal klaar:")
 for sentence in STORY:
     print(sentence)
 
+# Video-instellingen
 OUT = Path("horror-short.mp4")
 FRAMES = Path("frames")
 FRAMES.mkdir(exist_ok=True)
@@ -92,8 +100,10 @@ for i, sentence in enumerate(STORY):
     img = Image.new("RGB", (W, H), (8, 8, 15))
     draw = ImageDraw.Draw(img)
 
+    # Donkere rode gloed
     draw.ellipse((120, 180, 600, 660), fill=(28, 5, 12))
 
+    # Tekst automatisch over regels verdelen
     words = sentence.split()
     lines = []
     line = ""
@@ -135,17 +145,20 @@ for i, sentence in enumerate(STORY):
 
     img.save(FRAMES / f"{i:03d}.png")
 
-print("Video renderen...")
+# Maak de video: 12 scènes van 5 seconden = 60 seconden
+print("De video van ongeveer 1 minuut renderen...")
 
 subprocess.run([
     "ffmpeg", "-y",
-    "-framerate", "1/4",
+    "-framerate", "1/5",
     "-i", "frames/%03d.png",
     "-vf", "scale=720:1280,format=yuv420p",
     "-r", "30",
     "-c:v", "libx264",
-    "-t", str(len(STORY) * 4),
+    "-pix_fmt", "yuv420p",
+    "-t", "60",
     str(OUT)
 ], check=True)
 
 print(f"Video gemaakt: {OUT}")
+print("Duur: ongeveer 60 seconden.")
