@@ -1,29 +1,65 @@
 import os
-from google import genai
+import subprocess
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 
-api_key = os.environ.get("GEMINI_API_KEY")
-if not api_key:
-    raise RuntimeError("GEMINI_API_KEY is not configured")
+STORY = [
+    "At 3 AM, my phone rang.",
+    "It was my sister, who died five years ago.",
+    "I answered. She whispered,",
+    "\"Don't open the bedroom door.\"",
+    "Then I heard my sister's voice behind me:",
+    "\"Who are you talking to?\""
+]
 
-client = genai.Client(api_key=api_key)
+OUT = Path("horror-short.mp4")
+FRAMES = Path("frames")
+FRAMES.mkdir(exist_ok=True)
 
-prompt = """Write one original English horror story for a YouTube Short.
-Length: 100-130 words.
-Start with a gripping hook in the first sentence.
-Build suspense and finish with an unexpected twist.
-Use fictional characters and original wording.
-Return only the story, without a title or commentary."""
+W, H = 720, 1280
+font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+font = ImageFont.truetype(font_path, 42)
 
-response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents=prompt,
-)
+for i, text in enumerate(STORY):
+    img = Image.new("RGB", (W, H), (8, 8, 15))
+    draw = ImageDraw.Draw(img)
 
-story = response.text
-if not story:
-    raise RuntimeError("The AI returned an empty story")
+    # Subtle dark red glow
+    draw.ellipse((120, 180, 600, 660), fill=(28, 5, 12))
 
-with open("story.txt", "w", encoding="utf-8") as file:
-    file.write(story)
+    words = text.split()
+    lines, line = [], ""
+    for word in words:
+        test = (line + " " + word).strip()
+        if draw.textbbox((0, 0), test, font=font)[2] > 620:
+            lines.append(line)
+            line = word
+        else:
+            line = test
+    if line:
+        lines.append(line)
 
-print(story)
+    line_height = 58
+    y = (H - len(lines) * line_height) // 2
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        x = (W - (bbox[2] - bbox[0])) // 2
+        draw.text((x, y), line, font=font, fill=(245, 235, 235))
+        y += line_height
+
+    draw.text((24, 35), "DARK TALES", font=ImageFont.truetype(font_path, 24),
+              fill=(180, 40, 50))
+    img.save(FRAMES / f"{i:03d}.png")
+
+subprocess.run([
+    "ffmpeg", "-y",
+    "-framerate", "1/4",
+    "-i", "frames/%03d.png",
+    "-vf", "scale=720:1280,format=yuv420p",
+    "-r", "30",
+    "-c:v", "libx264",
+    "-t", str(len(STORY) * 4),
+    str(OUT)
+], check=True)
+
+print(f"Video created: {OUT}")
