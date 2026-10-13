@@ -1,13 +1,12 @@
 
 import os
 import subprocess
-import random
 from pathlib import Path
 
 from groq import Groq
 from PIL import Image, ImageDraw, ImageFont
 
-# Controleer of de API-sleutel beschikbaar is
+# API-key ophalen uit GitHub Secrets
 api_key = os.environ.get("GROQ_API_KEY")
 
 if not api_key:
@@ -17,30 +16,30 @@ if not api_key:
 
 client = Groq(api_key=api_key)
 
-# Vraag Groq om een nieuw horrorverhaal met zes scènes
+# Genereer een nieuw horrorverhaal
 response = client.chat.completions.create(
-    model="llama-3.3-70b-versatile",
+    model="openai/gpt-oss-120b",
     messages=[
         {
             "role": "system",
             "content": (
-                "You write original, suspenseful horror stories "
-                "suitable for a general audience. No graphic violence. "
-                "Return exactly six short lines, one sentence per line. "
-                "Do not number the lines. End with a surprising twist."
+                "Write original suspenseful horror stories suitable "
+                "for a general audience. No graphic violence. "
+                "Return exactly six short sentences, one per line. "
+                "Do not number them. End with a surprising twist."
             )
         },
         {
             "role": "user",
             "content": (
-                "Write a completely new short horror story in English. "
-                "Use an original idea, build suspense, and finish "
-                "with an unexpected twist. Return exactly six lines."
+                "Create a completely new short horror story in English. "
+                "Make it suspenseful and end with an unexpected twist. "
+                "Return exactly six lines."
             )
         }
     ],
     temperature=1.0,
-    max_tokens=250
+    max_tokens=300
 )
 
 story_text = response.choices[0].message.content.strip()
@@ -53,11 +52,11 @@ STORY = [
 
 if len(STORY) != 6:
     raise RuntimeError(
-        f"Groq gaf {len(STORY)} regels in plaats van 6. "
+        f"Het verhaal heeft {len(STORY)} regels in plaats van 6. "
         "Probeer de workflow opnieuw."
     )
 
-print("Nieuw verhaal gemaakt door Groq:")
+print("Nieuw horrorverhaal:")
 for sentence in STORY:
     print(sentence)
 
@@ -75,15 +74,14 @@ font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 font = ImageFont.truetype(font_path, 42)
 small_font = ImageFont.truetype(font_path, 24)
 
-for i, text in enumerate(STORY):
+for i, sentence in enumerate(STORY):
     img = Image.new("RGB", (W, H), (8, 8, 15))
     draw = ImageDraw.Draw(img)
 
-    # Donkere rode gloed
     draw.ellipse((120, 180, 600, 660), fill=(28, 5, 12))
 
-    # Tekst automatisch over regels verdelen
-    words = text.split()
+    # Tekst automatisch verdelen over regels
+    words = sentence.split()
     lines = []
     line = ""
 
@@ -103,13 +101,13 @@ for i, text in enumerate(STORY):
     line_height = 58
     y = (H - len(lines) * line_height) // 2
 
-    for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
+    for text_line in lines:
+        bbox = draw.textbbox((0, 0), text_line, font=font)
         x = (W - (bbox[2] - bbox[0])) // 2
 
         draw.text(
             (x, y),
-            line,
+            text_line,
             font=font,
             fill=(245, 235, 235)
         )
@@ -124,7 +122,7 @@ for i, text in enumerate(STORY):
 
     img.save(FRAMES / f"{i:03d}.png")
 
-# Maak de verticale video
+# Video maken
 subprocess.run([
     "ffmpeg", "-y",
     "-framerate", "1/4",
@@ -136,4 +134,4 @@ subprocess.run([
     str(OUT)
 ], check=True)
 
-print(f"Video created: {OUT}")
+print(f"Video gemaakt: {OUT}")
