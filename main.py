@@ -23,25 +23,24 @@ MODEL = "openai/gpt-oss-120b"
 
 session = requests.Session()
 session.headers.update({
-    "User-Agent": "DarkTalesEducationalProject/2.0 (video project)"
+    "User-Agent": "DarkTalesEducationalProject/3.0 (video project)"
 })
 
-# Houd bij welke afbeeldingen al gebruikt zijn in deze video.
 USED_IMAGES = set()
 
 FALLBACK_STORY = [
-    "At midnight, a phone glowed on a wooden table.",
-    "The bedroom door opened into a dark hallway.",
-    "A strange silhouette appeared behind the window.",
-    "Muddy footprints crossed the empty floor.",
-    "An old photograph showed a face nobody recognized.",
-    "The lights went out inside the abandoned house.",
-    "A new message appeared on the phone screen.",
-    "The message showed a photograph of the staircase.",
-    "A tall figure waited at the top of the stairs.",
-    "The bedroom mirror reflected an empty room.",
-    "Three knocks came from inside the wooden closet.",
-    "The phone rang again, and the caller was me."
+    "A phone displayed a strange message on a wooden table.",
+    "A bedroom door slowly opened into a dark hallway.",
+    "A human silhouette appeared behind a rain-covered window.",
+    "Muddy footprints crossed the dusty wooden floor.",
+    "An old family photograph showed an unfamiliar face.",
+    "A flickering lamp lit an abandoned living room.",
+    "A phone received a message from an unknown number.",
+    "The message contained a photograph of a staircase.",
+    "A tall shadow stood at the top of the stairs.",
+    "An antique mirror reflected a figure behind the viewer.",
+    "Three fresh scratches appeared on a closed wardrobe.",
+    "The ringing phone displayed the owner's own name."
 ]
 
 # ==================================================
@@ -59,11 +58,11 @@ def split_story(text):
             lines.append(line.strip())
 
     if len(lines) < SCENES:
-        text = " ".join(lines)
+        combined = " ".join(lines)
         lines = [
-            s.strip()
-            for s in re.split(r"(?<=[.!?])\s+", text)
-            if s.strip()
+            part.strip()
+            for part in re.split(r"(?<=[.!?])\s+", combined)
+            if part.strip()
         ]
 
     return lines
@@ -81,18 +80,23 @@ def generate_story():
             messages=[
                 {
                     "role": "system",
-                    "content": "Write original horror stories with concrete visual scenes."
+                    "content": (
+                        "Write original, suspenseful horror stories. "
+                        "Each scene must be visually specific and different. "
+                        "Use concrete subjects, actions, objects and locations."
+                    )
                 },
                 {
                     "role": "user",
                     "content": (
                         "Write an original English horror story for a YouTube Short. "
                         "Return exactly 12 numbered sentences, one per line. "
-                        "Every sentence must describe a different, specific, visible scene. "
-                        "Use concrete objects, places and actions. "
-                        "Avoid repeating the same setting in consecutive scenes. "
-                        "End with a twist. No title or explanations. "
-                        "Suitable for a general audience."
+                        "Each sentence describes one clear visual moment that could "
+                        "be illustrated by a photograph. Include the main subject, "
+                        "what it is doing, and the setting. Vary locations and objects. "
+                        "Avoid vague descriptions such as 'something strange happened'. "
+                        "End with a surprising twist. No title or explanations. "
+                        "Keep the story suitable for a general audience."
                     )
                 }
             ],
@@ -104,7 +108,7 @@ def generate_story():
         if len(story) >= SCENES:
             return story[:SCENES]
 
-        print("AI gaf te weinig zinnen; reserveverhaal gebruiken.")
+        print("AI gaf te weinig scènes; reserveverhaal gebruiken.")
 
     except Exception as exc:
         print(f"AI-verhaal niet beschikbaar: {exc}")
@@ -113,77 +117,131 @@ def generate_story():
 
 
 # ==================================================
-# 2. SCÈNE HERKENNEN EN ZOEKTERMEN MAKEN
+# 2. SCÈNE HERKENNEN
 # ==================================================
 
-SCENE_TYPES = [
-    ("phone", ["phone", "mobile", "telephone", "caller", "calling", "message", "screen"]),
-    ("footprints", ["footprints", "footprint", "muddy tracks", "muddy shoes"]),
-    ("stairs", ["staircase", "stairs", "steps", "landing"]),
+SCENE_RULES = [
+    ("footprints", ["footprints", "footprint", "muddy tracks", "shoe prints"]),
+    ("message", ["message", "text message", "unknown number", "notification"]),
+    ("phone", ["phone", "telephone", "mobile", "caller", "ringing"]),
+    ("photograph", ["photograph", "photographs", "family photo", "portrait"]),
+    ("stairs", ["staircase", "stairs", "steps", "top of the stairs"]),
     ("mirror", ["mirror", "reflection", "reflected"]),
-    ("photograph", ["photograph", "photographs", "portrait", "old photo", "picture"]),
-    ("window", ["window", "curtain", "glass pane"]),
-    ("closet", ["closet", "wardrobe", "cupboard"]),
-    ("door", ["door", "doorway", "door handle", "knocking", "knocks"]),
+    ("window", ["window", "rain-covered glass", "curtains"]),
+    ("wardrobe", ["wardrobe", "closet", "cupboard"]),
+    ("door", ["doorway", "door handle", "door opened", "closed door", "door"]),
     ("hallway", ["hallway", "corridor", "passage"]),
-    ("bedroom", ["bedroom", "bed", "pillow"]),
-    ("house", ["abandoned house", "haunted house", "empty house", "old house", "building"]),
-    ("shadow", ["shadow", "silhouette", "stranger", "figure", "unknown person"]),
-    ("light", ["light", "lights", "lamp", "darkness", "midnight"]),
+    ("bedroom", ["bedroom", "bedside", "pillow"]),
+    ("lamp", ["lamp", "light bulb", "flickering light", "chandelier"]),
+    ("house", ["abandoned house", "haunted house", "old building", "living room"]),
+    ("shadow", ["shadow", "silhouette", "stranger", "tall figure", "unknown figure"]),
 ]
 
 SCENE_SEARCH_TERMS = {
-    "phone": ["smartphone on table", "telephone in dark room", "phone glowing at night"],
-    "footprints": ["muddy footprints on floor", "muddy footprints in hallway", "shoe prints on dusty floor"],
-    "stairs": ["dark staircase inside old house", "wooden stairs abandoned building", "staircase in dim light"],
-    "mirror": ["old mirror in dark bedroom", "mirror reflection empty room", "antique mirror dark room"],
-    "photograph": ["old framed photograph", "vintage portrait photograph", "old family photo frame"],
-    "window": ["dark window at night", "window in abandoned house", "silhouette behind window"],
-    "closet": ["open wooden closet dark room", "old wardrobe in bedroom", "dark closet doorway"],
-    "door": ["open door dark hallway", "old wooden door dim light", "doorway in abandoned house"],
-    "hallway": ["long dark hallway", "corridor abandoned building", "empty corridor at night"],
-    "bedroom": ["dark abandoned bedroom", "bed in dim bedroom", "old bedroom at night"],
-    "house": ["abandoned house at night", "old house exterior dark", "haunted house in fog"],
-    "shadow": ["human silhouette in dark hallway", "shadowy figure in doorway", "mysterious silhouette at night"],
-    "light": ["single lamp in dark room", "dim light abandoned room", "dark room with light"],
-    "unknown": ["abandoned interior at night", "dark room atmospheric photograph", "old building interior"],
+    "footprints": [
+        "muddy footprints on dusty wooden floor photograph",
+        "muddy shoe prints inside abandoned house",
+        "footprints on old floor close up"
+    ],
+    "message": [
+        "smartphone screen showing text message photograph",
+        "phone displaying text notification in dark room",
+        "close up mobile phone message screen"
+    ],
+    "phone": [
+        "smartphone glowing on wooden table at night",
+        "telephone ringing in dark room photograph",
+        "mobile phone on bedside table at night"
+    ],
+    "photograph": [
+        "old framed family photograph on table",
+        "vintage family portrait in old picture frame",
+        "aged photograph close up"
+    ],
+    "stairs": [
+        "dark wooden staircase inside old house",
+        "staircase leading into darkness photograph",
+        "old narrow stairs in abandoned building"
+    ],
+    "mirror": [
+        "antique mirror in dark bedroom photograph",
+        "old mirror reflecting an empty room",
+        "ornate mirror in abandoned house"
+    ],
+    "window": [
+        "human silhouette behind window at night",
+        "rain covered window dark house photograph",
+        "shadow visible through old house window"
+    ],
+    "wardrobe": [
+        "old wooden wardrobe in dark bedroom",
+        "open antique closet in abandoned house",
+        "closed wardrobe in dimly lit room"
+    ],
+    "door": [
+        "old wooden door opening into dark hallway",
+        "open doorway inside abandoned house",
+        "old door handle in dim light photograph"
+    ],
+    "hallway": [
+        "long dark hallway in abandoned house",
+        "empty corridor with dim lighting photograph",
+        "narrow corridor inside old building"
+    ],
+    "bedroom": [
+        "abandoned bedroom at night photograph",
+        "old bedroom with bed and dark shadows",
+        "dark bedroom interior realistic photograph"
+    ],
+    "lamp": [
+        "single flickering lamp in dark room",
+        "old table lamp illuminating dusty room",
+        "dim lamp inside abandoned house"
+    ],
+    "house": [
+        "abandoned house exterior at night photograph",
+        "old deserted house surrounded by fog",
+        "abandoned living room dark interior"
+    ],
+    "shadow": [
+        "human silhouette standing in dark doorway",
+        "tall shadowy figure in abandoned hallway",
+        "mysterious human silhouette at night"
+    ],
+    "unknown": [
+        "eerie abandoned house interior photograph",
+        "dark atmospheric old building interior",
+        "empty room with mysterious shadows"
+    ]
 }
 
-STOPWORDS = {
-    "the", "and", "with", "from", "into", "onto", "then", "there",
-    "that", "this", "was", "were", "had", "has", "have", "for",
-    "while", "when", "where", "someone", "something", "appeared",
-    "slowly", "suddenly", "again", "inside", "outside", "showed",
-    "started", "began", "looked", "could", "would", "their", "his",
-    "her", "its", "they", "him", "she", "after", "before", "under",
-    "over", "near", "one", "two", "three", "old", "dark", "empty"
-}
+STOPWORDS = set("""
+the and with from into onto then there that this was were had has have
+for while when where someone something appeared slowly suddenly again
+inside outside showed started began looked could would their his her its
+they him she after before under over near one two three old dark empty
+a an is in on at of to by as it who what
+""".split())
 
 
 def choose_theme(sentence):
     text = sentence.lower()
 
-    # Eerst de specifiekere onderwerpen controleren.
-    for theme in [
-        "footprints", "photograph", "phone", "stairs", "mirror",
-        "closet", "window", "door", "hallway", "bedroom", "house",
-        "shadow", "light"
-    ]:
-        for candidate, keywords in SCENE_TYPES:
-            if candidate == theme and any(k in text for k in keywords):
-                return theme
+    # De meest specifieke gebeurtenissen staan bovenaan.
+    for theme, keywords in SCENE_RULES:
+        if any(re.search(r"\b" + re.escape(word) + r"\b", text)
+               for word in keywords):
+            return theme
 
     return "unknown"
 
 
 def make_queries(sentence, theme):
-    queries = []
+    queries = list(SCENE_SEARCH_TERMS.get(
+        theme, SCENE_SEARCH_TERMS["unknown"]
+    ))
 
-    # Zoek eerst naar een concrete scène die bij de zin past.
-    for term in SCENE_SEARCH_TERMS.get(theme, SCENE_SEARCH_TERMS["unknown"]):
-        queries.append(term)
-
-    # Gebruik ook belangrijke woorden uit de zin zelf.
+    # Gebruik ook de belangrijkste woorden uit de verhaalzin.
     words = re.findall(r"[a-z]+", sentence.lower())
     important = [
         word for word in words
@@ -191,16 +249,20 @@ def make_queries(sentence, theme):
     ]
 
     if important:
-        queries.append(" ".join(important[:5]) + " photograph")
-        queries.append(" ".join(important[:3]) + " interior")
+        queries.append(" ".join(important[:6]) + " photograph")
 
-    # Verwijder dubbele zoekopdrachten.
     return list(dict.fromkeys(queries))
 
 
 # ==================================================
-# 3. FOTO'S ZOEKEN EN DUBBELS VERMIJDEN
+# 3. PASSENDE FOTO ZOEKEN
 # ==================================================
+
+EXCLUDED_WORDS = [
+    "logo", "icon", "coat of arms", "diagram",
+    "screenshot", "map", "flag", "symbol"
+]
+
 
 def search_photo(sentence, theme):
     queries = make_queries(sentence, theme)
@@ -214,7 +276,7 @@ def search_photo(sentence, theme):
                     "generator": "search",
                     "gsrsearch": query,
                     "gsrnamespace": 6,
-                    "gsrlimit": 15,
+                    "gsrlimit": 20,
                     "prop": "imageinfo",
                     "iiprop": "url|extmetadata",
                     "iiurlwidth": 900,
@@ -224,58 +286,56 @@ def search_photo(sentence, theme):
             )
             response.raise_for_status()
 
-            pages = response.json().get("query", {}).get("pages", {})
-            candidates = list(pages.values())
-            random.shuffle(candidates)
+            pages = list(
+                response.json().get("query", {}).get("pages", {}).values()
+            )
 
             scored = []
-
             query_words = set(re.findall(r"[a-z]+", query.lower()))
             query_words -= STOPWORDS
 
-            for page in candidates:
-                title = page.get("title", "")
-                title_words = set(re.findall(r"[a-z]+", title.lower()))
+            for page in pages:
+                title = page.get("title", "").lower()
 
-                info = page.get("imageinfo", [{}])[0]
+                if any(word in title for word in EXCLUDED_WORDS):
+                    continue
+
+                info_list = page.get("imageinfo", [])
+                if not info_list:
+                    continue
+
+                info = info_list[0]
                 metadata = info.get("extmetadata", {})
 
                 license_name = unescape(
                     metadata.get("LicenseShortName", {}).get("value", "")
                 ).strip()
 
-                # Geen dubbele foto's binnen dezelfde video.
                 url = info.get("thumburl") or info.get("url")
+
                 if not url or url in USED_IMAGES or not license_name:
                     continue
 
-                # Vermijd logo's, posters met tekst en niet-foto's.
-                excluded = [
-                    "logo", "icon", "map", "diagram", "coat of arms",
-                    "flag", "screenshot", "symbol"
-                ]
-                if any(word in title.lower() for word in excluded):
+                title_words = set(re.findall(r"[a-z]+", title))
+                overlap = len(query_words & title_words)
+
+                # Geef zoekresultaten die het onderwerp benoemen voorrang.
+                theme_words = set(theme.split())
+                theme_bonus = 2 if theme_words & title_words else 0
+
+                # Geef resultaten zonder enige relevante titelwoorden
+                # geen voorrang boven betere resultaten.
+                if overlap == 0 and theme != "unknown":
                     continue
 
-                # Geef titels met relevante woorden een hogere score.
-                overlap = len(query_words.intersection(title_words))
-                theme_words = set(re.findall(r"[a-z]+", theme))
-                theme_bonus = len(theme_words.intersection(title_words))
+                scored.append((overlap + theme_bonus, page, info,
+                               license_name, url))
 
-                scored.append((
-                    overlap + theme_bonus,
-                    page,
-                    info,
-                    license_name,
-                    url
-                ))
-
-            # Probeer de best passende resultaten eerst.
             scored.sort(key=lambda item: item[0], reverse=True)
 
-            # Kies willekeurig uit de beste resultaten om herhaling
-            # van steeds dezelfde eerste zoekuitkomst te verminderen.
-            best = [item for item in scored[:5] if item[0] > 0]
+            # Eerst de best passende kandidaten proberen.
+            # Een kleine willekeurige keuze helpt tegen steeds dezelfde foto.
+            best = scored[:8]
             random.shuffle(best)
 
             for score, page, info, license_name, url in best:
@@ -297,20 +357,23 @@ def search_photo(sentence, theme):
                         f"License: {license_name} | "
                         f"{info.get('descriptionurl', '')}"
                     )
-                    print(f"Foto gevonden voor '{sentence}': {page.get('title')}")
+
+                    print(
+                        f"Foto voor scène: {page.get('title', '')}"
+                    )
                     return image, credit
 
                 except Exception as exc:
-                    print(f"Foto kon niet worden geopend: {exc}")
+                    print(f"Foto overslaan: {exc}")
 
         except Exception as exc:
-            print(f"Zoeken mislukt voor '{query}': {exc}")
+            print(f"Zoekopdracht mislukt '{query}': {exc}")
 
     return None, None
 
 
 # ==================================================
-# 4. UNIEKE RESERVESCÈNE
+# 4. RESERVE-ILLUSTRATIES
 # ==================================================
 
 def load_font(size):
@@ -322,7 +385,6 @@ def load_font(size):
 
 
 def draw_object_scene(sentence, theme, index):
-    # Verschillende achtergronden voor meer afwisseling.
     random.seed(index + 100)
     background = random.choice([
         (7, 8, 16), (12, 9, 18), (10, 13, 22),
@@ -332,70 +394,87 @@ def draw_object_scene(sentence, theme, index):
     image = Image.new("RGB", (W, H), background)
     draw = ImageDraw.Draw(image)
 
-    # Donkere vloer en achtergrondlicht.
     draw.rectangle((0, 880, W, H), fill=(20, 17, 25))
     draw.ellipse((80, 180, 640, 950), fill=(25, 10, 20))
 
-    if theme == "phone":
-        draw.rectangle((100, 850, 620, 900), fill=(45, 35, 32))
-        draw.rounded_rectangle((250, 430, 470, 800), radius=30,
-                               fill=(35, 37, 45), outline=(150, 150, 160), width=5)
-        draw.rounded_rectangle((270, 465, 450, 740), radius=10, fill=(60, 90, 115))
-        draw.ellipse((335, 500, 385, 550), fill=(220, 225, 240))
+    if theme in ("phone", "message"):
+        draw.rectangle((80, 850, 640, 900), fill=(45, 35, 32))
+        draw.rounded_rectangle(
+            (245, 400, 475, 810), radius=30,
+            fill=(35, 37, 45), outline=(150, 150, 160), width=5
+        )
+        draw.rounded_rectangle(
+            (265, 445, 455, 750), radius=10, fill=(35, 65, 85)
+        )
 
-    elif theme in ("door", "hallway", "closet", "stairs", "house"):
+        if theme == "message":
+            for y in (500, 560, 620):
+                draw.rounded_rectangle(
+                    (285, y, 430, y + 25), radius=8, fill=(100, 160, 180)
+                )
+        else:
+            draw.ellipse((335, 470, 385, 520), fill=(220, 225, 240))
+
+    elif theme in ("door", "hallway", "wardrobe", "stairs", "house"):
         draw.rectangle((100, 180, 620, 1050), fill=(30, 24, 30))
+
         if theme == "stairs":
             for step in range(7):
                 y = 850 - step * 90
                 x = 140 + step * 40
-                draw.polygon([(x, y), (600, y), (600, y + 35), (x, y + 35)],
-                             fill=(65, 45, 42))
+                draw.polygon(
+                    [(x, y), (600, y), (600, y + 35), (x, y + 35)],
+                    fill=(65, 45, 42)
+                )
         else:
-            draw.rectangle((200, 260, 520, 1000), fill=(12, 10, 16),
-                           outline=(105, 80, 75), width=8)
+            draw.rectangle(
+                (200, 260, 520, 1000), fill=(12, 10, 16),
+                outline=(105, 80, 75), width=8
+            )
             draw.ellipse((455, 590, 475, 610), fill=(180, 145, 90))
 
     elif theme == "window":
-        draw.rectangle((140, 250, 580, 800), fill=(10, 15, 30),
-                       outline=(140, 135, 145), width=9)
+        draw.rectangle(
+            (140, 250, 580, 800), fill=(10, 15, 30),
+            outline=(140, 135, 145), width=9
+        )
         draw.line((360, 250, 360, 800), fill=(110, 110, 130), width=7)
         draw.line((140, 525, 580, 525), fill=(110, 110, 130), width=7)
         draw.ellipse((360, 370, 430, 440), fill=(55, 55, 75))
 
     elif theme == "mirror":
-        draw.rounded_rectangle((170, 220, 550, 850), radius=70,
-                               fill=(40, 45, 55), outline=(150, 125, 105), width=12)
+        draw.rounded_rectangle(
+            (170, 220, 550, 850), radius=70,
+            fill=(40, 45, 55), outline=(150, 125, 105), width=12
+        )
         draw.ellipse((285, 340, 435, 500), fill=(12, 12, 20))
-        draw.polygon([(250, 780), (290, 520), (430, 520), (470, 780)],
-                     fill=(16, 16, 25))
 
     elif theme == "photograph":
         draw.rectangle((150, 280, 570, 850), fill=(95, 70, 48))
         draw.rectangle((180, 310, 540, 820), fill=(22, 25, 35))
         draw.ellipse((285, 390, 435, 540), fill=(48, 42, 48))
-        draw.polygon([(230, 770), (280, 535), (440, 535), (490, 770)],
-                     fill=(38, 34, 42))
 
     elif theme == "footprints":
-        for x, y in [(270, 400), (390, 510), (270, 620),
-                     (390, 730), (270, 840)]:
+        for x, y in [
+            (270, 400), (390, 510), (270, 620),
+            (390, 730), (270, 840)
+        ]:
             draw.ellipse((x, y, x + 45, y + 75), fill=(55, 35, 35))
 
     else:
-        # Eigen silhouet met wisselende plaats en grootte.
         x = random.randint(230, 330)
         draw.ellipse((x, 330, x + 160, 500), fill=(3, 3, 8))
-        draw.polygon([
-            (x - 45, 1000), (x - 5, 500),
-            (x + 165, 500), (x + 220, 1000)
-        ], fill=(3, 3, 8))
+        draw.polygon(
+            [(x - 45, 1000), (x - 5, 500),
+             (x + 165, 500), (x + 220, 1000)],
+            fill=(3, 3, 8)
+        )
 
     return image
 
 
 # ==================================================
-# 5. TEKST OP DE AFBEELDING
+# 5. SCÈNE EN TEKST MAKEN
 # ==================================================
 
 def create_scene(sentence, index, credits):
@@ -403,12 +482,13 @@ def create_scene(sentence, index, credits):
     image, credit = search_photo(sentence, theme)
 
     if image is None:
-        print(f"Geen geschikte foto voor scène {index + 1}; illustratie gebruiken.")
+        print(f"Scène {index + 1}: reserve-illustratie gebruiken.")
         image = draw_object_scene(sentence, theme, index)
         credits.append(
             f"Scène {index + 1}: zelfgemaakte illustratie ({theme})"
         )
     else:
+        # Vul het volledige verticale beeld zonder de foto uit te rekken.
         image.thumbnail((W, H))
 
         canvas = Image.new("RGB", (W, H), (8, 8, 16))
@@ -416,7 +496,7 @@ def create_scene(sentence, index, credits):
             image,
             ((W - image.width) // 2, (H - image.height) // 2)
         )
-        image = ImageEnhance.Brightness(canvas).enhance(0.52)
+        image = ImageEnhance.Brightness(canvas).enhance(0.65)
         credits.append(f"Scène {index + 1}: {credit}")
 
     image = image.convert("RGBA")
@@ -448,8 +528,7 @@ def create_scene(sentence, index, credits):
 
     draw.rounded_rectangle(
         (35, y - 25, W - 35, y + total_height + 25),
-        radius=20,
-        fill=(0, 0, 0, 190)
+        radius=20, fill=(0, 0, 0, 190)
     )
 
     for line in lines:
@@ -459,8 +538,10 @@ def create_scene(sentence, index, credits):
         draw.text((x, y), line, font=font, fill=(255, 255, 255))
         y += line_height
 
-    draw.text((30, 35), "DARK TALES", font=small_font,
-              fill=(230, 200, 200))
+    draw.text(
+        (30, 35), "DARK TALES",
+        font=small_font, fill=(230, 200, 200)
+    )
 
     image.convert("RGB").save(FRAMES / f"frame_{index + 1:02d}.png")
 
@@ -470,16 +551,14 @@ def create_scene(sentence, index, credits):
 # ==================================================
 
 def main():
-    # Voorkom hergebruik van afbeeldingen uit een vorige uitvoering.
     USED_IMAGES.clear()
 
     for old_frame in FRAMES.glob("frame_*.png"):
         old_frame.unlink()
 
     story = generate_story()
-
-    # Zorg dat er precies 12 scènes zijn.
     story = story[:SCENES]
+
     if len(story) < SCENES:
         story.extend(FALLBACK_STORY[len(story):SCENES])
 
@@ -519,7 +598,7 @@ def main():
         raise RuntimeError("De video is niet goed aangemaakt.")
 
     print(f"\nVideo klaar: {OUT}")
-    print("Afbeeldingsbronnen en licenties staan in image-credits.txt")
+    print("Afbeeldingsbronnen staan in image-credits.txt")
 
 
 if __name__ == "__main__":
