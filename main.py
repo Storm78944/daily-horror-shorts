@@ -2,17 +2,17 @@
 import os
 import re
 import subprocess
+from io import BytesIO
 from pathlib import Path
-from textwrap import wrap
 
 import requests
 from groq import Groq
 from gtts import gTTS
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
-# --------------------------------------------------
-# INSTELLINGEN
-# --------------------------------------------------
+# ==================================================
+# DARK TALES - AUTOMATISCHE HORRORVIDEO GENERATOR
+# ==================================================
 
 OUT = Path("horror-short.mp4")
 FRAMES = Path("frames")
@@ -23,92 +23,128 @@ SCENES = 12
 SECONDS_PER_SCENE = 5
 MODEL = "openai/gpt-oss-120b"
 
-# Gratis Unsplash-foto's. Als een foto niet beschikbaar is,
-# maakt het programma zelf een donkere achtergrond.
-PHOTO_IDS = [
-    "photo-1518709268805-4e9042af9f23",
-    "photo-1511497584788-876760111969",
-    "photo-1500530855697-b586d89ba3ee",
-    "photo-1470770841072-f978cf4d019e",
-    "photo-1518837695005-2083093ee35b",
-    "photo-1500534623283-312aade485b7",
-    "photo-1448375240586-882707db888b",
-    "photo-1470252649378-9c29740c9fa8",
-    "photo-1501785888041-af3ef285b470",
-    "photo-1519681393784-d120267933ba",
-    "photo-1472214103451-9374bd1c798e",
-    "photo-1500534314209-a25ddb2bd429",
-]
+# Afbeeldingen per soort scène.
+# De code kiest een categorie op basis van de verhaaltekst.
+IMAGE_OPTIONS = {
+    "bedroom": [
+        "photo-1505693416388-ac5ce068fe85",
+        "photo-1518709268805-4e9042af9f23",
+    ],
+    "phone": [
+        "photo-1512499617640-c74ae3a79d37",
+        "photo-1511707171634-5f897ff02aa9",
+    ],
+    "door": [
+        "photo-1518005020951-eccb494ad742",
+        "photo-1511497584788-876760111969",
+    ],
+    "forest": [
+        "photo-1448375240586-882707db888b",
+        "photo-1511497584788-876760111969",
+    ],
+    "house": [
+        "photo-1518780664697-55e3ad937233",
+        "photo-1511818966892-d7d671e672a2",
+    ],
+    "night": [
+        "photo-1470770841072-f978cf4d019e",
+        "photo-1519681393784-d120267933ba",
+    ],
+    "window": [
+        "photo-1484154218962-a197022b5858",
+        "photo-1518005020951-eccb494ad742",
+    ],
+    "water": [
+        "photo-1500375592092-40eb2168fd21",
+        "photo-1518837695005-2083093ee35b",
+    ],
+    "road": [
+        "photo-1519608487953-e999c86e7455",
+        "photo-1500530855697-b586d89ba3ee",
+    ],
+    "hallway": [
+        "photo-1511818966892-d7d671e672a2",
+        "photo-1518005020951-eccb494ad742",
+    ],
+    "shadow": [
+        "photo-1518709268805-4e9042af9f23",
+        "photo-1511497584788-876760111969",
+    ],
+    "grave": [
+        "photo-1500534623283-312aade485b7",
+        "photo-1448375240586-882707db888b",
+    ],
+    "mirror": [
+        "photo-1518005020951-eccb494ad742",
+        "photo-1505693416388-ac5ce068fe85",
+    ],
+    "generic": [
+        "photo-1518709268805-4e9042af9f23",
+        "photo-1448375240586-882707db888b",
+        "photo-1470770841072-f978cf4d019e",
+        "photo-1511497584788-876760111969",
+    ],
+}
 
-# Reserveverhaal voor als de AI geen bruikbaar verhaal terugstuurt.
-# De video kan dan alsnog worden gemaakt.
+# Reserveverhaal als Groq niet beschikbaar is.
 FALLBACK_STORY = [
-    "At midnight, I heard someone walking upstairs.",
-    "I live alone, and my front door was locked.",
-    "I checked my phone, but there was no signal.",
-    "Then a message appeared from an unknown number.",
-    "It said, whatever you do, stay downstairs.",
-    "A second message arrived a moment later.",
-    "It said, I can see you from the hallway.",
-    "I slowly turned toward the dark staircase.",
-    "A shadow moved across the wall above me.",
-    "Then my phone rang with my own number.",
-    "I answered, and heard my voice whispering.",
-    "Stop looking at the stairs. It is behind you.",
+    "At midnight, I heard footsteps upstairs.",
+    "I live alone, and every door was locked.",
+    "My phone suddenly lit up on the table.",
+    "An unknown number sent me a message.",
+    "It said, do not look at the staircase.",
+    "Then I heard a quiet voice behind me.",
+    "The voice sounded exactly like my own.",
+    "I slowly turned toward the dark hallway.",
+    "A shadow stood beside my bedroom door.",
+    "My phone rang, showing my own number.",
+    "I answered and heard myself whispering.",
+    "Stop looking at the hallway. It is behind you.",
 ]
 
-# --------------------------------------------------
-# 1. NIEUW HORRORVERHAAL MAKEN
-# --------------------------------------------------
+# ==================================================
+# 1. VERHAAL MAKEN
+# ==================================================
 
 def split_story(text):
-    """Zet AI-tekst om naar losse zinnen."""
     if not text:
         return []
 
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = text.replace("\r", "\n").strip()
+    text = re.sub(r"<[^>]+>", "", text).strip()
 
-    sentences = []
+    # Verwijder een eventueel titelblok.
+    text = re.sub(
+        r"(?im)^\s*(story|horror story|title|verhaal)\s*:.*$",
+        "",
+        text,
+    )
 
-    # Eerst proberen: één zin per regel.
+    # Probeer eerst één zin per regel.
+    lines = []
     for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        # Verwijder nummering, opsommingstekens en aanhalingstekens.
         line = re.sub(r"^\s*(?:\d+[\.\)\-:]|[-*•])\s*", "", line)
-        line = re.sub(
-            r"^(?:story|horror story|here is the story)\s*:\s*",
-            "",
-            line,
-            flags=re.I,
-        )
         line = line.strip()
-
         if line:
-            sentences.append(line)
+            lines.append(line)
 
-    # Als de AI alles in één alinea heeft gezet, splits op leestekens.
-    if len(sentences) < SCENES:
+    # Als de AI een alinea terugstuurt, splits op leestekens.
+    if len(lines) < SCENES:
         cleaned = re.sub(r"\s+", " ", text).strip()
-        sentences = [
-            s.strip(" \t-*•0123456789")
-            for s in re.split(r"(?<=[.!?])\s+", cleaned)
-            if s.strip(" \t-*•0123456789")
+        lines = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", cleaned)
+            if sentence.strip()
         ]
 
-    # Verwijder eventuele lege regels en kopjes.
-    sentences = [
-        s for s in sentences
-        if s and s.lower() not in {
-            "story", "horror story", "here is the story"
-        }
-    ]
+    # Verwijder nummering en lege regels.
+    result = []
+    for line in lines:
+        line = re.sub(r"^\s*\d+[\.\)\-:]\s*", "", line).strip()
+        if line:
+            result.append(line)
 
-    return sentences
+    return result
 
 
 def generate_story():
@@ -123,16 +159,17 @@ def generate_story():
     client = Groq(api_key=api_key)
 
     prompt = """
-Write an original, suspenseful horror story in English for a YouTube Short.
+Write an original horror story in English for a YouTube Short.
 
-Requirements:
-- Exactly 12 sentences.
-- Put each sentence on its own line.
-- Number the lines from 1 to 12.
-- Use simple, natural English.
-- Make the story suspenseful, with a strong twist at the end.
-- Make it suitable for a general audience.
-- Do not include a title, introduction, explanation, or extra text.
+Return exactly 12 sentences.
+Put each sentence on a separate line.
+Number the sentences from 1 to 12.
+Every sentence should describe one clear moment or scene.
+Include specific visual details that could be shown in a photograph.
+Build suspense and end with a surprising twist.
+Use natural, simple English.
+Do not add a title or any explanation.
+Keep the story suitable for a general audience.
 """
 
     for attempt in range(2):
@@ -143,8 +180,8 @@ Requirements:
                     {
                         "role": "system",
                         "content": (
-                            "You write original short horror stories. "
-                            "Follow the requested format exactly."
+                            "You are a horror storyteller. "
+                            "Return exactly 12 numbered sentences."
                         ),
                     },
                     {"role": "user", "content": prompt},
@@ -153,91 +190,122 @@ Requirements:
                 max_completion_tokens=1200,
             )
 
-            message = response.choices[0].message
-            story_text = message.content or ""
+            story_text = response.choices[0].message.content or ""
             story = split_story(story_text)
 
             if len(story) >= SCENES:
-                story = story[:SCENES]
                 print("Nieuw AI-verhaal ontvangen.")
-                return story
+                return story[:SCENES]
 
             print(
-                f"AI-poging {attempt + 1}: "
-                f"{len(story)} bruikbare zinnen ontvangen."
+                f"Poging {attempt + 1}: "
+                f"{len(story)} zinnen ontvangen."
             )
 
         except Exception as exc:
             print(f"AI-poging {attempt + 1} mislukt: {exc}")
 
-    print("Geen bruikbaar AI-verhaal ontvangen.")
-    print("Het reserveverhaal wordt gebruikt.")
+    print("Reserveverhaal gebruiken.")
     return FALLBACK_STORY.copy()
 
 
-STORY = generate_story()
+# ==================================================
+# 2. PASSENDE AFBEELDING KIEZEN
+# ==================================================
 
-print("\nVerhaal voor de video:")
-for i, sentence in enumerate(STORY, start=1):
-    print(f"{i}. {sentence}")
+def choose_image_category(sentence):
+    """
+    Kies een afbeeldingscategorie op basis van woorden
+    in de huidige scène.
+    """
+    text = sentence.lower()
 
-# --------------------------------------------------
-# 2. ENGELSE AI-STEM MAKEN
-# --------------------------------------------------
+    categories = [
+        ("bedroom", [
+            "bedroom", "bed", "pillow", "mattress", "sleeping",
+        ]),
+        ("phone", [
+            "phone", "call", "message", "text", "number",
+            "ringing", "screen", "notification",
+        ]),
+        ("door", [
+            "door", "locked", "knock", "handle", "opened",
+        ]),
+        ("forest", [
+            "forest", "woods", "trees", "branches", "leaves",
+        ]),
+        ("house", [
+            "house", "home", "building", "attic", "basement",
+        ]),
+        ("hallway", [
+            "hallway", "corridor", "stairs", "staircase",
+            "upstairs", "downstairs", "landing",
+        ]),
+        ("window", [
+            "window", "curtain", "glass", "outside",
+        ]),
+        ("water", [
+            "water", "ocean", "lake", "river", "drowning",
+        ]),
+        ("road", [
+            "road", "street", "car", "driving", "highway",
+        ]),
+        ("grave", [
+            "grave", "cemetery", "tombstone", "buried",
+            "funeral", "graveyard",
+        ]),
+        ("mirror", [
+            "mirror", "reflection", "reflected",
+        ]),
+        ("shadow", [
+            "shadow", "silhouette", "figure", "shape",
+            "standing behind", "dark figure",
+        ]),
+        ("night", [
+            "midnight", "night", "darkness", "moon",
+            "stars", "3 am", "3 a.m.",
+        ]),
+    ]
 
-print("\nVertelling maken...")
+    # De eerste passende categorie wordt gebruikt.
+    for category, keywords in categories:
+        if any(word in text for word in keywords):
+            return category
 
-narration = " ".join(STORY)
-tts = gTTS(text=narration, lang="en", slow=False)
-tts.save("narration.mp3")
-
-# --------------------------------------------------
-# 3. LETTERTYPES LADEN
-# --------------------------------------------------
-
-font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-
-try:
-    font = ImageFont.truetype(font_path, 42)
-    small_font = ImageFont.truetype(font_path, 24)
-except OSError:
-    font = ImageFont.load_default()
-    small_font = ImageFont.load_default()
-
-# --------------------------------------------------
-# 4. ACHTERGRONDEN DOWNLOADEN
-# --------------------------------------------------
-
-session = requests.Session()
-session.headers.update(
-    {"User-Agent": "DarkTalesVideoGenerator/1.0"}
-)
-
-for old_frame in FRAMES.glob("*.png"):
-    old_frame.unlink()
+    return "generic"
 
 
-def make_background(photo_id, index):
-    """Download een achtergrond of maak zelf een donkere afbeelding."""
+def download_background(sentence, index):
+    category = choose_image_category(sentence)
+    photo_ids = IMAGE_OPTIONS[category]
+
+    # Andere afbeeldingen uit dezelfde categorie per scène.
+    photo_id = photo_ids[index % len(photo_ids)]
+
     url = (
         f"https://images.unsplash.com/{photo_id}"
-        "?auto=format&fit=crop&w=720&h=1280&q=80"
+        "?auto=format&fit=crop&w=720&h=1280&q=85"
     )
 
     try:
-        response = session.get(url, timeout=20)
+        response = requests.get(
+            url,
+            timeout=20,
+            headers={"User-Agent": "DarkTalesVideoGenerator/1.0"},
+        )
         response.raise_for_status()
 
-        from io import BytesIO
         image = Image.open(BytesIO(response.content)).convert("RGB")
         image = image.resize((W, H))
         image = ImageEnhance.Brightness(image).enhance(0.42)
+
+        print(f"Scène {index + 1}: categorie '{category}'")
         return image
 
     except Exception as exc:
-        print(f"Foto {index + 1} niet beschikbaar: {exc}")
-        print("Donkere reserveachtergrond gebruiken.")
+        print(f"Afbeelding niet beschikbaar: {exc}")
 
+        # Eigen achtergrond als de download mislukt.
         image = Image.new("RGB", (W, H), (8, 8, 15))
         draw = ImageDraw.Draw(image)
         draw.ellipse(
@@ -247,30 +315,41 @@ def make_background(photo_id, index):
         return image
 
 
-# --------------------------------------------------
-# 5. SCÈNES MET TEKST MAKEN
-# --------------------------------------------------
+# ==================================================
+# 3. TEKST EN ACHTERGRONDEN COMBINEREN
+# ==================================================
 
-for i, sentence in enumerate(STORY):
-    print(f"Scène {i + 1}/{SCENES} maken...")
+def load_font(size):
+    font_path = (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    )
+    try:
+        return ImageFont.truetype(font_path, size)
+    except OSError:
+        return ImageFont.load_default()
 
-    image = make_background(PHOTO_IDS[i], i)
+
+def create_scene(sentence, index):
+    image = download_background(sentence, index).convert("RGBA")
+
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 65))
-    image = Image.alpha_composite(image.convert("RGBA"), overlay)
-
+    image = Image.alpha_composite(image, overlay)
     draw = ImageDraw.Draw(image)
 
-    # Tekst automatisch over meerdere regels verdelen.
+    font = load_font(42)
+    small_font = load_font(24)
+
+    # Tekst afbreken zodat deze binnen het scherm blijft.
     words = sentence.split()
     lines = []
     current_line = ""
 
     for word in words:
         test_line = f"{current_line} {word}".strip()
+        width = draw.textbbox((0, 0), test_line, font=font)[2]
 
-        if draw.textbbox((0, 0), test_line, font=font)[2] > W - 100:
-            if current_line:
-                lines.append(current_line)
+        if width > W - 100 and current_line:
+            lines.append(current_line)
             current_line = word
         else:
             current_line = test_line
@@ -278,19 +357,20 @@ for i, sentence in enumerate(STORY):
     if current_line:
         lines.append(current_line)
 
-    line_height = 62
+    line_height = 58
     total_height = len(lines) * line_height
     y = (H - total_height) // 2
-
-    # Donkere tekstachtergrond voor betere leesbaarheid.
     padding = 28
-    box_top = y - padding
-    box_bottom = y + total_height + padding
 
     draw.rounded_rectangle(
-        (35, box_top, W - 35, box_bottom),
+        (
+            35,
+            y - padding,
+            W - 35,
+            y + total_height + padding,
+        ),
         radius=22,
-        fill=(0, 0, 0, 175),
+        fill=(0, 0, 0, 180),
     )
 
     for line in lines:
@@ -298,7 +378,6 @@ for i, sentence in enumerate(STORY):
         text_width = bbox[2] - bbox[0]
         x = (W - text_width) // 2
 
-        # Schaduw en witte tekst.
         draw.text(
             (x + 2, y + 3),
             line,
@@ -313,7 +392,6 @@ for i, sentence in enumerate(STORY):
         )
         y += line_height
 
-    # Kleine kanaalnaam.
     draw.text(
         (30, 35),
         "DARK TALES",
@@ -321,41 +399,64 @@ for i, sentence in enumerate(STORY):
         fill=(220, 190, 190, 230),
     )
 
-    frame_path = FRAMES / f"frame_{i + 1:02d}.png"
-    image.convert("RGB").save(frame_path, quality=95)
+    frame_path = FRAMES / f"frame_{index + 1:02d}.png"
+    image.convert("RGB").save(frame_path)
 
-# --------------------------------------------------
-# 6. VIDEO MAKEN MET FFMPEG
-# --------------------------------------------------
 
-print("\nVideo van ongeveer 60 seconden maken...")
+# ==================================================
+# 4. VIDEO EN ENGELSE STEM MAKEN
+# ==================================================
 
-command = [
-    "ffmpeg",
-    "-y",
-    "-hide_banner",
-    "-loglevel", "error",
-    "-framerate", f"1/{SECONDS_PER_SCENE}",
-    "-i", str(FRAMES / "frame_%02d.png"),
-    "-i", "narration.mp3",
-    "-map", "0:v:0",
-    "-map", "1:a:0",
-    "-vf", "fps=30,format=yuv420p",
-    "-c:v", "libx264",
-    "-preset", "medium",
-    "-crf", "23",
-    "-af", "apad",
-    "-t", str(SCENES * SECONDS_PER_SCENE),
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-movflags", "+faststart",
-    str(OUT),
-]
+def main():
+    story = generate_story()
 
-subprocess.run(command, check=True)
+    print("\nVerhaal voor de video:")
+    for i, sentence in enumerate(story, start=1):
+        print(f"{i}. {sentence}")
 
-if not OUT.exists() or OUT.stat().st_size == 0:
-    raise RuntimeError("De video is niet goed aangemaakt.")
+    print("\nEngelse vertelling maken...")
+    narration = " ".join(story)
+    gTTS(text=narration, lang="en", slow=False).save("narration.mp3")
 
-print(f"\nKlaar! Video gemaakt: {OUT}")
-print(f"Bestandsgrootte: {OUT.stat().st_size // 1024} KB")
+    for old_frame in FRAMES.glob("frame_*.png"):
+        old_frame.unlink()
+
+    print("\nScènes maken...")
+    for i, sentence in enumerate(story):
+        create_scene(sentence, i)
+
+    print("\nVideo van ongeveer 60 seconden maken...")
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-framerate", f"1/{SECONDS_PER_SCENE}",
+        "-i", str(FRAMES / "frame_%02d.png"),
+        "-i", "narration.mp3",
+        "-map", "0:v:0",
+        "-map", "1:a:0",
+        "-vf", "fps=30,format=yuv420p",
+        "-c:v", "libx264",
+        "-preset", "medium",
+        "-crf", "23",
+        "-af", "apad",
+        "-t", str(SCENES * SECONDS_PER_SCENE),
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        str(OUT),
+    ]
+
+    subprocess.run(command, check=True)
+
+    if not OUT.exists() or OUT.stat().st_size == 0:
+        raise RuntimeError("De video is niet goed aangemaakt.")
+
+    print(f"\nKlaar! Video gemaakt: {OUT}")
+    print(f"Grootte: {OUT.stat().st_size // 1024} KB")
+
+
+if __name__ == "__main__":
+    main()
