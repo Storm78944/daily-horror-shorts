@@ -4,6 +4,7 @@ import re
 import subprocess
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from groq import Groq
@@ -11,7 +12,7 @@ from gtts import gTTS
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 # ==================================================
-# DARK TALES - AUTOMATISCHE HORRORVIDEO GENERATOR
+# DARK TALES - HORROR VIDEO GENERATOR
 # ==================================================
 
 OUT = Path("horror-short.mp4")
@@ -23,88 +24,30 @@ SCENES = 12
 SECONDS_PER_SCENE = 5
 MODEL = "openai/gpt-oss-120b"
 
-# Afbeeldingen per soort scène.
-# De code kiest een categorie op basis van de verhaaltekst.
-IMAGE_OPTIONS = {
-    "bedroom": [
-        "photo-1505693416388-ac5ce068fe85",
-        "photo-1518709268805-4e9042af9f23",
-    ],
-    "phone": [
-        "photo-1512499617640-c74ae3a79d37",
-        "photo-1511707171634-5f897ff02aa9",
-    ],
-    "door": [
-        "photo-1518005020951-eccb494ad742",
-        "photo-1511497584788-876760111969",
-    ],
-    "forest": [
-        "photo-1448375240586-882707db888b",
-        "photo-1511497584788-876760111969",
-    ],
-    "house": [
-        "photo-1518780664697-55e3ad937233",
-        "photo-1511818966892-d7d671e672a2",
-    ],
-    "night": [
-        "photo-1470770841072-f978cf4d019e",
-        "photo-1519681393784-d120267933ba",
-    ],
-    "window": [
-        "photo-1484154218962-a197022b5858",
-        "photo-1518005020951-eccb494ad742",
-    ],
-    "water": [
-        "photo-1500375592092-40eb2168fd21",
-        "photo-1518837695005-2083093ee35b",
-    ],
-    "road": [
-        "photo-1519608487953-e999c86e7455",
-        "photo-1500530855697-b586d89ba3ee",
-    ],
-    "hallway": [
-        "photo-1511818966892-d7d671e672a2",
-        "photo-1518005020951-eccb494ad742",
-    ],
-    "shadow": [
-        "photo-1518709268805-4e9042af9f23",
-        "photo-1511497584788-876760111969",
-    ],
-    "grave": [
-        "photo-1500534623283-312aade485b7",
-        "photo-1448375240586-882707db888b",
-    ],
-    "mirror": [
-        "photo-1518005020951-eccb494ad742",
-        "photo-1505693416388-ac5ce068fe85",
-    ],
-    "generic": [
-        "photo-1518709268805-4e9042af9f23",
-        "photo-1448375240586-882707db888b",
-        "photo-1470770841072-f978cf4d019e",
-        "photo-1511497584788-876760111969",
-    ],
-}
-
-# Reserveverhaal als Groq niet beschikbaar is.
-FALLBACK_STORY = [
-    "At midnight, I heard footsteps upstairs.",
-    "I live alone, and every door was locked.",
-    "My phone suddenly lit up on the table.",
-    "An unknown number sent me a message.",
-    "It said, do not look at the staircase.",
-    "Then I heard a quiet voice behind me.",
-    "The voice sounded exactly like my own.",
-    "I slowly turned toward the dark hallway.",
-    "A shadow stood beside my bedroom door.",
-    "My phone rang, showing my own number.",
-    "I answered and heard myself whispering.",
-    "Stop looking at the hallway. It is behind you.",
-]
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "DarkTalesVideoGenerator/1.0 (educational project)"
+})
 
 # ==================================================
 # 1. VERHAAL MAKEN
 # ==================================================
+
+FALLBACK_STORY = [
+    "At midnight, my phone rang in the empty house.",
+    "The screen showed a picture of my bedroom door.",
+    "Someone had written my name across the photograph.",
+    "I looked up and saw the door slowly opening.",
+    "A dark hallway stretched beyond the doorway.",
+    "Then I heard footsteps coming from upstairs.",
+    "My phone received another message from an unknown number.",
+    "The message said that someone was standing behind me.",
+    "I turned around and saw a figure near the window.",
+    "The figure was holding a phone identical to mine.",
+    "My phone rang again, but this time the caller was me.",
+    "The figure smiled and whispered, you are finally home.",
+]
+
 
 def split_story(text):
     if not text:
@@ -113,43 +56,28 @@ def split_story(text):
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
     text = re.sub(r"<[^>]+>", "", text).strip()
 
-    # Verwijder een eventueel titelblok.
-    text = re.sub(
-        r"(?im)^\s*(story|horror story|title|verhaal)\s*:.*$",
-        "",
-        text,
-    )
-
-    # Probeer eerst één zin per regel.
     lines = []
     for line in text.splitlines():
         line = re.sub(r"^\s*(?:\d+[\.\)\-:]|[-*•])\s*", "", line)
         line = line.strip()
-        if line:
+
+        if line and not re.match(
+            r"^(story|horror story|title)\s*:", line, re.I
+        ):
             lines.append(line)
 
-    # Als de AI een alinea terugstuurt, splits op leestekens.
     if len(lines) < SCENES:
         cleaned = re.sub(r"\s+", " ", text).strip()
         lines = [
-            sentence.strip()
-            for sentence in re.split(r"(?<=[.!?])\s+", cleaned)
-            if sentence.strip()
+            s.strip()
+            for s in re.split(r"(?<=[.!?])\s+", cleaned)
+            if s.strip()
         ]
 
-    # Verwijder nummering en lege regels.
-    result = []
-    for line in lines:
-        line = re.sub(r"^\s*\d+[\.\)\-:]\s*", "", line).strip()
-        if line:
-            result.append(line)
-
-    return result
+    return lines
 
 
 def generate_story():
-    print("Nieuw horrorverhaal maken...")
-
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError(
@@ -161,222 +89,240 @@ def generate_story():
     prompt = """
 Write an original horror story in English for a YouTube Short.
 
-Return exactly 12 sentences.
-Put each sentence on a separate line.
-Number the sentences from 1 to 12.
-Every sentence should describe one clear moment or scene.
-Include specific visual details that could be shown in a photograph.
-Build suspense and end with a surprising twist.
-Use natural, simple English.
-Do not add a title or any explanation.
+Return exactly 12 numbered sentences, one per line.
+Each sentence must describe a clear, VISUAL scene that can be
+illustrated with a real photograph.
+Describe concrete objects, places, and actions.
+For example, say "A mobile phone lights up on a wooden table"
+rather than "Something strange happens".
+Make the scenes follow one coherent story.
+Build suspense and finish with a surprising twist.
+No title, no introduction, no extra explanation.
 Keep the story suitable for a general audience.
 """
 
     for attempt in range(2):
         try:
+            print(f"Generating story, attempt {attempt + 1}...")
+
             response = client.chat.completions.create(
                 model=MODEL,
                 messages=[
                     {
                         "role": "system",
                         "content": (
-                            "You are a horror storyteller. "
+                            "Write original visual horror stories. "
                             "Return exactly 12 numbered sentences."
                         ),
                     },
                     {"role": "user", "content": prompt},
                 ],
-                temperature=0.9,
-                max_completion_tokens=1200,
+                temperature=0.8,
+                max_completion_tokens=1400,
             )
 
-            story_text = response.choices[0].message.content or ""
-            story = split_story(story_text)
+            text = response.choices[0].message.content or ""
+            story = split_story(text)
 
             if len(story) >= SCENES:
-                print("Nieuw AI-verhaal ontvangen.")
                 return story[:SCENES]
 
-            print(
-                f"Poging {attempt + 1}: "
-                f"{len(story)} zinnen ontvangen."
-            )
+            print(f"Received only {len(story)} sentences.")
 
         except Exception as exc:
-            print(f"AI-poging {attempt + 1} mislukt: {exc}")
+            print(f"Story generation failed: {exc}")
 
-    print("Reserveverhaal gebruiken.")
+    print("Using backup story.")
     return FALLBACK_STORY.copy()
 
 
 # ==================================================
-# 2. PASSENDE AFBEELDING KIEZEN
+# 2. AFBEELDINGEN ZOEKEN OP WIKIMEDIA COMMONS
 # ==================================================
 
-def choose_image_category(sentence):
+def search_commons(sentence):
     """
-    Kies een afbeeldingscategorie op basis van woorden
-    in de huidige scène.
+    Zoek foto's met onderwerpen uit de volledige scène.
+    Geef alleen voorrang aan bestanden met bekende licenties.
     """
-    text = sentence.lower()
 
-    categories = [
-        ("bedroom", [
-            "bedroom", "bed", "pillow", "mattress", "sleeping",
-        ]),
-        ("phone", [
-            "phone", "call", "message", "text", "number",
-            "ringing", "screen", "notification",
-        ]),
-        ("door", [
-            "door", "locked", "knock", "handle", "opened",
-        ]),
-        ("forest", [
-            "forest", "woods", "trees", "branches", "leaves",
-        ]),
-        ("house", [
-            "house", "home", "building", "attic", "basement",
-        ]),
-        ("hallway", [
-            "hallway", "corridor", "stairs", "staircase",
-            "upstairs", "downstairs", "landing",
-        ]),
-        ("window", [
-            "window", "curtain", "glass", "outside",
-        ]),
-        ("water", [
-            "water", "ocean", "lake", "river", "drowning",
-        ]),
-        ("road", [
-            "road", "street", "car", "driving", "highway",
-        ]),
-        ("grave", [
-            "grave", "cemetery", "tombstone", "buried",
-            "funeral", "graveyard",
-        ]),
-        ("mirror", [
-            "mirror", "reflection", "reflected",
-        ]),
-        ("shadow", [
-            "shadow", "silhouette", "figure", "shape",
-            "standing behind", "dark figure",
-        ]),
-        ("night", [
-            "midnight", "night", "darkness", "moon",
-            "stars", "3 am", "3 a.m.",
-        ]),
-    ]
+    # Gebruik de volledige zin als zoekopdracht.
+    # Kortere woordenlijst als tweede poging.
+    stopwords = {
+        "the", "a", "an", "and", "or", "but", "in", "on",
+        "at", "to", "of", "my", "his", "her", "their",
+        "it", "was", "were", "is", "are", "with", "from",
+        "then", "suddenly", "slowly", "i", "he", "she",
+        "they", "you", "me", "this", "that", "as", "by",
+    }
 
-    # De eerste passende categorie wordt gebruikt.
-    for category, keywords in categories:
-        if any(word in text for word in keywords):
-            return category
+    words = re.findall(r"[a-zA-Z]{3,}", sentence.lower())
+    keywords = [w for w in words if w not in stopwords]
+    short_query = " ".join(keywords[:6])
 
-    return "generic"
+    queries = [sentence, short_query]
+
+    for search_query in queries:
+        if not search_query:
+            continue
+
+        try:
+            response = session.get(
+                "https://commons.wikimedia.org/w/api.php",
+                params={
+                    "action": "query",
+                    "generator": "search",
+                    "gsrsearch": search_query,
+                    "gsrnamespace": 6,
+                    "gsrlimit": 10,
+                    "gsrwhat": "text",
+                    "prop": "imageinfo",
+                    "iiprop": "url|extmetadata",
+                    "iiurlwidth": 900,
+                    "format": "json",
+                },
+                timeout=25,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            pages = data.get("query", {}).get("pages", {})
+            candidates = list(pages.values())
+
+            # Geef voorkeur aan bestanden met een bekende licentie.
+            for page in candidates:
+                info = page.get("imageinfo", [{}])[0]
+                meta = info.get("extmetadata", {})
+                license_name = meta.get(
+                    "LicenseShortName", {}
+                ).get("value", "")
+
+                if not license_name:
+                    continue
+
+                image_url = info.get("thumburl") or info.get("url")
+                if not image_url:
+                    continue
+
+                return {
+                    "url": image_url,
+                    "title": page.get("title", "Unknown image"),
+                    "license": license_name,
+                    "artist": meta.get("Artist", {}).get(
+                        "value", "Unknown"
+                    ),
+                    "source": info.get("descriptionurl", ""),
+                }
+
+        except Exception as exc:
+            print(f"Image search failed: {exc}")
+
+    return None
 
 
-def download_background(sentence, index):
-    category = choose_image_category(sentence)
-    photo_ids = IMAGE_OPTIONS[category]
+def download_background(sentence, index, credits):
+    print(f"Searching image for scene {index + 1}: {sentence}")
 
-    # Andere afbeeldingen uit dezelfde categorie per scène.
-    photo_id = photo_ids[index % len(photo_ids)]
+    result = search_commons(sentence)
 
-    url = (
-        f"https://images.unsplash.com/{photo_id}"
-        "?auto=format&fit=crop&w=720&h=1280&q=85"
-    )
+    if result:
+        try:
+            response = session.get(result["url"], timeout=25)
+            response.raise_for_status()
 
-    try:
-        response = requests.get(
-            url,
-            timeout=20,
-            headers={"User-Agent": "DarkTalesVideoGenerator/1.0"},
-        )
-        response.raise_for_status()
+            image = Image.open(
+                BytesIO(response.content)
+            ).convert("RGB")
 
-        image = Image.open(BytesIO(response.content)).convert("RGB")
-        image = image.resize((W, H))
-        image = ImageEnhance.Brightness(image).enhance(0.42)
+            # Vul het verticale scherm zonder het beeld uit te rekken.
+            image.thumbnail((W, H))
 
-        print(f"Scène {index + 1}: categorie '{category}'")
-        return image
+            canvas = Image.new("RGB", (W, H), (8, 8, 15))
+            x = (W - image.width) // 2
+            y = (H - image.height) // 2
+            canvas.paste(image, (x, y))
 
-    except Exception as exc:
-        print(f"Afbeelding niet beschikbaar: {exc}")
+            image = ImageEnhance.Brightness(canvas).enhance(0.40)
 
-        # Eigen achtergrond als de download mislukt.
-        image = Image.new("RGB", (W, H), (8, 8, 15))
-        draw = ImageDraw.Draw(image)
-        draw.ellipse(
-            (80, 180, 640, 900),
-            fill=(28, 5, 12),
-        )
-        return image
+            credits.append(
+                f"Scene {index + 1}: {result['title']}\n"
+                f"Artist: {result['artist']}\n"
+                f"License: {result['license']}\n"
+                f"Source: {result['source']}\n"
+            )
+
+            print(
+                f"Image found: {result['title']} "
+                f"({result['license']})"
+            )
+            return image
+
+        except Exception as exc:
+            print(f"Could not download image: {exc}")
+
+    # Geen willekeurige foto gebruiken als de zoekopdracht mislukt.
+    print("No suitable licensed image found; using dark background.")
+
+    image = Image.new("RGB", (W, H), (8, 8, 15))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((80, 180, 640, 900), fill=(28, 5, 12))
+    return image
 
 
 # ==================================================
-# 3. TEKST EN ACHTERGRONDEN COMBINEREN
+# 3. TEKST OP DE AFBEELDING ZETTEN
 # ==================================================
 
 def load_font(size):
-    font_path = (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    )
+    path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     try:
-        return ImageFont.truetype(font_path, size)
+        return ImageFont.truetype(path, size)
     except OSError:
         return ImageFont.load_default()
 
 
-def create_scene(sentence, index):
-    image = download_background(sentence, index).convert("RGBA")
+def create_scene(sentence, index, credits):
+    image = download_background(sentence, index, credits)
+    image = image.convert("RGBA")
 
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 65))
     image = Image.alpha_composite(image, overlay)
-    draw = ImageDraw.Draw(image)
 
-    font = load_font(42)
+    draw = ImageDraw.Draw(image)
+    font = load_font(40)
     small_font = load_font(24)
 
-    # Tekst afbreken zodat deze binnen het scherm blijft.
     words = sentence.split()
     lines = []
-    current_line = ""
+    current = ""
 
     for word in words:
-        test_line = f"{current_line} {word}".strip()
-        width = draw.textbbox((0, 0), test_line, font=font)[2]
+        test = f"{current} {word}".strip()
 
-        if width > W - 100 and current_line:
-            lines.append(current_line)
-            current_line = word
+        if draw.textbbox((0, 0), test, font=font)[2] > W - 100:
+            if current:
+                lines.append(current)
+            current = word
         else:
-            current_line = test_line
+            current = test
 
-    if current_line:
-        lines.append(current_line)
+    if current:
+        lines.append(current)
 
-    line_height = 58
+    line_height = 56
     total_height = len(lines) * line_height
     y = (H - total_height) // 2
-    padding = 28
+    padding = 26
 
     draw.rounded_rectangle(
-        (
-            35,
-            y - padding,
-            W - 35,
-            y + total_height + padding,
-        ),
-        radius=22,
-        fill=(0, 0, 0, 180),
+        (35, y - padding, W - 35, y + total_height + padding),
+        radius=20,
+        fill=(0, 0, 0, 185),
     )
 
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
-        text_width = bbox[2] - bbox[0]
-        x = (W - text_width) // 2
+        x = (W - (bbox[2] - bbox[0])) // 2
 
         draw.text(
             (x + 2, y + 3),
@@ -396,36 +342,47 @@ def create_scene(sentence, index):
         (30, 35),
         "DARK TALES",
         font=small_font,
-        fill=(220, 190, 190, 230),
+        fill=(230, 200, 200, 255),
     )
 
-    frame_path = FRAMES / f"frame_{index + 1:02d}.png"
-    image.convert("RGB").save(frame_path)
+    image.convert("RGB").save(
+        FRAMES / f"frame_{index + 1:02d}.png"
+    )
 
 
 # ==================================================
-# 4. VIDEO EN ENGELSE STEM MAKEN
+# 4. VIDEO MAKEN
 # ==================================================
 
 def main():
     story = generate_story()
 
-    print("\nVerhaal voor de video:")
-    for i, sentence in enumerate(story, start=1):
+    print("\nStory:")
+    for i, sentence in enumerate(story, 1):
         print(f"{i}. {sentence}")
 
-    print("\nEngelse vertelling maken...")
+    print("\nCreating English narration...")
     narration = " ".join(story)
-    gTTS(text=narration, lang="en", slow=False).save("narration.mp3")
+    gTTS(text=narration, lang="en", slow=False).save(
+        "narration.mp3"
+    )
 
     for old_frame in FRAMES.glob("frame_*.png"):
         old_frame.unlink()
 
-    print("\nScènes maken...")
-    for i, sentence in enumerate(story):
-        create_scene(sentence, i)
+    credits = []
 
-    print("\nVideo van ongeveer 60 seconden maken...")
+    for i, sentence in enumerate(story):
+        print(f"\nCreating scene {i + 1}/{SCENES}...")
+        create_scene(sentence, i, credits)
+
+    Path("image-credits.txt").write_text(
+        "\n\n".join(credits) if credits else
+        "No external images were used.",
+        encoding="utf-8",
+    )
+
+    print("\nRendering video...")
 
     command = [
         "ffmpeg",
@@ -452,10 +409,10 @@ def main():
     subprocess.run(command, check=True)
 
     if not OUT.exists() or OUT.stat().st_size == 0:
-        raise RuntimeError("De video is niet goed aangemaakt.")
+        raise RuntimeError("The video was not created correctly.")
 
-    print(f"\nKlaar! Video gemaakt: {OUT}")
-    print(f"Grootte: {OUT.stat().st_size // 1024} KB")
+    print(f"\nVideo ready: {OUT}")
+    print("Image credits saved to image-credits.txt")
 
 
 if __name__ == "__main__":
