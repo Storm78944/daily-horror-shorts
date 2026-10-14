@@ -4,7 +4,7 @@ import re
 import subprocess
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import quote
+from html import unescape
 
 import requests
 from groq import Groq
@@ -12,7 +12,7 @@ from gtts import gTTS
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 
 # ==================================================
-# DARK TALES - HORROR VIDEO GENERATOR
+# DARK TALES
 # ==================================================
 
 OUT = Path("horror-short.mp4")
@@ -26,251 +26,202 @@ MODEL = "openai/gpt-oss-120b"
 
 session = requests.Session()
 session.headers.update({
-    "User-Agent": "DarkTalesVideoGenerator/1.0 (educational project)"
+    "User-Agent": "DarkTalesEducationalProject/1.0"
 })
 
-# ==================================================
-# 1. VERHAAL MAKEN
-# ==================================================
-
 FALLBACK_STORY = [
-    "At midnight, my phone rang in the empty house.",
-    "The screen showed a picture of my bedroom door.",
-    "Someone had written my name across the photograph.",
-    "I looked up and saw the door slowly opening.",
-    "A dark hallway stretched beyond the doorway.",
-    "Then I heard footsteps coming from upstairs.",
-    "My phone received another message from an unknown number.",
-    "The message said that someone was standing behind me.",
-    "I turned around and saw a figure near the window.",
-    "The figure was holding a phone identical to mine.",
-    "My phone rang again, but this time the caller was me.",
-    "The figure smiled and whispered, you are finally home.",
+    "At midnight, a phone lit up on a wooden table.",
+    "A bedroom door slowly opened into a dark hallway.",
+    "A shadow appeared behind the frosted window.",
+    "Someone left muddy footprints across the floor.",
+    "An old photograph showed a strange face.",
+    "The lights went out in the empty house.",
+    "A message appeared on the phone screen.",
+    "The message showed a picture of the staircase.",
+    "A tall silhouette stood at the top of the stairs.",
+    "The bedroom mirror reflected an empty room.",
+    "Three slow knocks came from inside the closet.",
+    "The phone rang again, and the caller was me.",
 ]
 
+# ==================================================
+# 1. VERHAAL GENEREREN
+# ==================================================
 
 def split_story(text):
-    if not text:
-        return []
-
-    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    text = re.sub(r"<think>.*?</think>", "", text or "", flags=re.S)
     text = re.sub(r"<[^>]+>", "", text).strip()
 
-    lines = []
+    result = []
+
     for line in text.splitlines():
         line = re.sub(r"^\s*(?:\d+[\.\)\-:]|[-*•])\s*", "", line)
         line = line.strip()
+        if line:
+            result.append(line)
 
-        if line and not re.match(
-            r"^(story|horror story|title)\s*:", line, re.I
-        ):
-            lines.append(line)
-
-    if len(lines) < SCENES:
+    if len(result) < SCENES:
         cleaned = re.sub(r"\s+", " ", text).strip()
-        lines = [
+        result = [
             s.strip()
             for s in re.split(r"(?<=[.!?])\s+", cleaned)
             if s.strip()
         ]
 
-    return lines
+    return result
 
 
 def generate_story():
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "GROQ_API_KEY ontbreekt. Controleer GitHub Secrets."
-        )
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        raise RuntimeError("GROQ_API_KEY ontbreekt in GitHub Secrets.")
 
-    client = Groq(api_key=api_key)
+    client = Groq(api_key=key)
 
     prompt = """
 Write an original horror story in English for a YouTube Short.
-
 Return exactly 12 numbered sentences, one per line.
-Each sentence must describe a clear, VISUAL scene that can be
-illustrated with a real photograph.
-Describe concrete objects, places, and actions.
-For example, say "A mobile phone lights up on a wooden table"
-rather than "Something strange happens".
-Make the scenes follow one coherent story.
-Build suspense and finish with a surprising twist.
-No title, no introduction, no extra explanation.
-Keep the story suitable for a general audience.
+Each sentence must describe one concrete, visible scene.
+Mention specific objects and locations that can be illustrated.
+Keep the scenes in the same story and end with a twist.
+No title or explanations. Suitable for a general audience.
 """
 
-    for attempt in range(2):
-        try:
-            print(f"Generating story, attempt {attempt + 1}...")
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Write clear, visual horror stories.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.8,
+            max_completion_tokens=1400,
+        )
 
-            response = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Write original visual horror stories. "
-                            "Return exactly 12 numbered sentences."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.8,
-                max_completion_tokens=1400,
-            )
+        story = split_story(response.choices[0].message.content or "")
+        if len(story) >= SCENES:
+            return story[:SCENES]
 
-            text = response.choices[0].message.content or ""
-            story = split_story(text)
+        print("AI gaf te weinig zinnen; reserveverhaal gebruiken.")
 
-            if len(story) >= SCENES:
-                return story[:SCENES]
+    except Exception as exc:
+        print(f"AI-verhaal niet beschikbaar: {exc}")
 
-            print(f"Received only {len(story)} sentences.")
-
-        except Exception as exc:
-            print(f"Story generation failed: {exc}")
-
-    print("Using backup story.")
     return FALLBACK_STORY.copy()
 
 
 # ==================================================
-# 2. AFBEELDINGEN ZOEKEN OP WIKIMEDIA COMMONS
+# 2. AFBEELDINGSTHEMA BEPALEN
 # ==================================================
 
-def search_commons(sentence):
-    """
-    Zoek foto's met onderwerpen uit de volledige scène.
-    Geef alleen voorrang aan bestanden met bekende licenties.
-    """
+THEMES = [
+    ("phone", ["phone", "mobile", "caller", "call", "message", "screen"]),
+    ("door", ["door", "doorway", "knock", "handle", "closet"]),
+    ("hallway", ["hallway", "corridor", "stairs", "staircase", "footsteps"]),
+    ("window", ["window", "curtain", "glass"]),
+    ("bedroom", ["bedroom", "bed", "pillow", "sleep"]),
+    ("mirror", ["mirror", "reflection", "reflected"]),
+    ("photo", ["photograph", "picture", "portrait", "photo"]),
+    ("footprints", ["footprints", "footsteps", "muddy tracks"]),
+    ("house", ["house", "home", "building", "attic", "basement"]),
+    ("shadow", ["shadow", "silhouette", "figure", "stranger", "face"]),
+    ("light", ["lights", "dark", "darkness", "midnight", "lamp"]),
+]
 
-    # Gebruik de volledige zin als zoekopdracht.
-    # Kortere woordenlijst als tweede poging.
-    stopwords = {
-        "the", "a", "an", "and", "or", "but", "in", "on",
-        "at", "to", "of", "my", "his", "her", "their",
-        "it", "was", "were", "is", "are", "with", "from",
-        "then", "suddenly", "slowly", "i", "he", "she",
-        "they", "you", "me", "this", "that", "as", "by",
-    }
 
-    words = re.findall(r"[a-zA-Z]{3,}", sentence.lower())
-    keywords = [w for w in words if w not in stopwords]
-    short_query = " ".join(keywords[:6])
+def choose_theme(sentence):
+    words = set(re.findall(r"[a-z]+", sentence.lower()))
 
-    queries = [sentence, short_query]
+    for theme, keywords in THEMES:
+        if words.intersection(keywords):
+            return theme
 
-    for search_query in queries:
-        if not search_query:
-            continue
+    return "shadow"
 
+
+# ==================================================
+# 3. PASSENDE FOTO ZOEKEN
+# ==================================================
+
+def search_photo(sentence, theme):
+    # Zoek met het voorwerp uit de zin en een fotografieterm.
+    queries = [
+        f"{theme} {sentence} photograph",
+        f"{theme} dark room photograph",
+    ]
+
+    for query in queries:
         try:
             response = session.get(
                 "https://commons.wikimedia.org/w/api.php",
                 params={
                     "action": "query",
                     "generator": "search",
-                    "gsrsearch": search_query,
+                    "gsrsearch": query,
                     "gsrnamespace": 6,
-                    "gsrlimit": 10,
-                    "gsrwhat": "text",
+                    "gsrlimit": 8,
                     "prop": "imageinfo",
                     "iiprop": "url|extmetadata",
                     "iiurlwidth": 900,
                     "format": "json",
                 },
-                timeout=25,
+                timeout=20,
             )
             response.raise_for_status()
-            data = response.json()
 
-            pages = data.get("query", {}).get("pages", {})
+            pages = response.json().get("query", {}).get("pages", {})
             candidates = list(pages.values())
 
-            # Geef voorkeur aan bestanden met een bekende licentie.
+            # Alleen een resultaat gebruiken als de bestandsnaam
+            # duidelijk bij het onderwerp past.
             for page in candidates:
+                title = page.get("title", "").lower()
+                title_words = set(re.findall(r"[a-z]+", title))
+
+                if theme not in title_words and not (
+                    theme == "phone" and
+                    title_words.intersection({"mobile", "telephone"})
+                ):
+                    continue
+
                 info = page.get("imageinfo", [{}])[0]
-                meta = info.get("extmetadata", {})
-                license_name = meta.get(
-                    "LicenseShortName", {}
-                ).get("value", "")
+                metadata = info.get("extmetadata", {})
+                license_name = unescape(
+                    metadata.get("LicenseShortName", {}).get("value", "")
+                )
 
-                if not license_name:
+                url = info.get("thumburl") or info.get("url")
+                if not url or not license_name:
                     continue
 
-                image_url = info.get("thumburl") or info.get("url")
-                if not image_url:
+                image_response = session.get(url, timeout=20)
+                image_response.raise_for_status()
+
+                image = Image.open(
+                    BytesIO(image_response.content)
+                ).convert("RGB")
+
+                # Alleen echte afbeeldingsbestanden gebruiken.
+                if image.width < 250 or image.height < 250:
                     continue
 
-                return {
-                    "url": image_url,
-                    "title": page.get("title", "Unknown image"),
-                    "license": license_name,
-                    "artist": meta.get("Artist", {}).get(
-                        "value", "Unknown"
-                    ),
-                    "source": info.get("descriptionurl", ""),
-                }
+                return image, (
+                    f"{page.get('title', '')} | "
+                    f"License: {license_name} | "
+                    f"{info.get('descriptionurl', '')}"
+                )
 
         except Exception as exc:
-            print(f"Image search failed: {exc}")
+            print(f"Zoeken mislukt voor '{query}': {exc}")
 
-    return None
-
-
-def download_background(sentence, index, credits):
-    print(f"Searching image for scene {index + 1}: {sentence}")
-
-    result = search_commons(sentence)
-
-    if result:
-        try:
-            response = session.get(result["url"], timeout=25)
-            response.raise_for_status()
-
-            image = Image.open(
-                BytesIO(response.content)
-            ).convert("RGB")
-
-            # Vul het verticale scherm zonder het beeld uit te rekken.
-            image.thumbnail((W, H))
-
-            canvas = Image.new("RGB", (W, H), (8, 8, 15))
-            x = (W - image.width) // 2
-            y = (H - image.height) // 2
-            canvas.paste(image, (x, y))
-
-            image = ImageEnhance.Brightness(canvas).enhance(0.40)
-
-            credits.append(
-                f"Scene {index + 1}: {result['title']}\n"
-                f"Artist: {result['artist']}\n"
-                f"License: {result['license']}\n"
-                f"Source: {result['source']}\n"
-            )
-
-            print(
-                f"Image found: {result['title']} "
-                f"({result['license']})"
-            )
-            return image
-
-        except Exception as exc:
-            print(f"Could not download image: {exc}")
-
-    # Geen willekeurige foto gebruiken als de zoekopdracht mislukt.
-    print("No suitable licensed image found; using dark background.")
-
-    image = Image.new("RGB", (W, H), (8, 8, 15))
-    draw = ImageDraw.Draw(image)
-    draw.ellipse((80, 180, 640, 900), fill=(28, 5, 12))
-    return image
+    return None, None
 
 
 # ==================================================
-# 3. TEKST OP DE AFBEELDING ZETTEN
+# 4. RESERVESCÈNES MAKEN
 # ==================================================
 
 def load_font(size):
@@ -281,30 +232,152 @@ def load_font(size):
         return ImageFont.load_default()
 
 
-def create_scene(sentence, index, credits):
-    image = download_background(sentence, index, credits)
-    image = image.convert("RGBA")
+def draw_object_scene(sentence, theme):
+    """
+    Maak een eenvoudige, donkere illustratie in plaats van
+    een willekeurige foto wanneer geen passende foto gevonden is.
+    """
+    image = Image.new("RGB", (W, H), (8, 8, 16))
+    draw = ImageDraw.Draw(image)
 
+    # Subtiele donkere achtergrond en vloer.
+    draw.rectangle((0, 850, W, H), fill=(18, 15, 25))
+    draw.ellipse((100, 150, 620, 900), fill=(22, 8, 17))
+
+    if theme == "phone":
+        draw.rounded_rectangle(
+            (250, 420, 470, 800),
+            radius=28,
+            fill=(45, 45, 55),
+            outline=(180, 180, 190),
+            width=5,
+        )
+        draw.rounded_rectangle(
+            (270, 460, 450, 730),
+            radius=12,
+            fill=(70, 90, 115),
+        )
+        draw.ellipse((330, 500, 390, 560), fill=(220, 220, 240))
+
+    elif theme in ("door", "hallway", "house", "bedroom"):
+        draw.rectangle(
+            (180, 250, 540, 1000),
+            fill=(30, 22, 27),
+            outline=(120, 90, 80),
+            width=8,
+        )
+        if theme in ("door", "hallway"):
+            draw.polygon(
+                [(190, 260), (470, 320), (470, 990), (190, 990)],
+                fill=(10, 9, 15),
+            )
+            draw.ellipse((420, 600, 440, 620), fill=(180, 140, 80))
+        else:
+            draw.rectangle((240, 680, 490, 870), fill=(50, 35, 42))
+            draw.rectangle((250, 620, 480, 700), fill=(90, 70, 80))
+
+    elif theme == "window":
+        draw.rectangle(
+            (160, 250, 560, 800),
+            fill=(12, 15, 28),
+            outline=(150, 145, 155),
+            width=8,
+        )
+        draw.line((360, 250, 360, 800), fill=(120, 120, 140), width=6)
+        draw.line((160, 525, 560, 525), fill=(120, 120, 140), width=6)
+
+    elif theme == "mirror":
+        draw.rounded_rectangle(
+            (180, 240, 540, 850),
+            radius=100,
+            fill=(45, 48, 60),
+            outline=(150, 130, 115),
+            width=12,
+        )
+        draw.ellipse((290, 350, 430, 520), fill=(15, 15, 24))
+        draw.polygon(
+            [(260, 760), (300, 540), (420, 540), (460, 760)],
+            fill=(18, 18, 28),
+        )
+
+    elif theme == "photo":
+        draw.rectangle(
+            (170, 300, 550, 820),
+            fill=(75, 60, 50),
+            outline=(180, 155, 110),
+            width=15,
+        )
+        draw.rectangle((200, 330, 520, 790), fill=(22, 24, 34))
+        draw.ellipse((290, 410, 430, 550), fill=(45, 40, 50))
+        draw.polygon(
+            [(250, 750), (290, 550), (430, 550), (470, 750)],
+            fill=(40, 35, 45),
+        )
+
+    elif theme == "footprints":
+        for x, y in [
+            (270, 400), (390, 500), (270, 600),
+            (390, 700), (270, 800),
+        ]:
+            draw.ellipse((x, y, x + 45, y + 80), fill=(55, 35, 35))
+
+    else:
+        # Een silhouet als veilige reserve voor andere onderwerpen.
+        draw.ellipse((270, 350, 450, 530), fill=(3, 3, 8))
+        draw.polygon(
+            [(240, 1000), (270, 520), (450, 520), (500, 1000)],
+            fill=(3, 3, 8),
+        )
+
+    return image
+
+
+# ==================================================
+# 5. TEKST OVER DE SCÈNE ZETTEN
+# ==================================================
+
+def create_scene(sentence, index, credits):
+    theme = choose_theme(sentence)
+    image, credit = search_photo(sentence, theme)
+
+    if image is None:
+        print(f"Geen passende foto; illustratie voor '{theme}' maken.")
+        image = draw_object_scene(sentence, theme)
+        credits.append(
+            f"Scène {index + 1}: zelfgemaakte illustratie ({theme})"
+        )
+    else:
+        image = image.convert("RGB")
+        image.thumbnail((W, H))
+
+        canvas = Image.new("RGB", (W, H), (8, 8, 16))
+        canvas.paste(
+            image,
+            ((W - image.width) // 2, (H - image.height) // 2),
+        )
+        image = ImageEnhance.Brightness(canvas).enhance(0.42)
+        credits.append(f"Scène {index + 1}: {credit}")
+
+    image = image.convert("RGBA")
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 65))
     image = Image.alpha_composite(image, overlay)
-
     draw = ImageDraw.Draw(image)
+
     font = load_font(40)
     small_font = load_font(24)
 
-    words = sentence.split()
     lines = []
     current = ""
 
-    for word in words:
-        test = f"{current} {word}".strip()
+    for word in sentence.split():
+        candidate = f"{current} {word}".strip()
 
-        if draw.textbbox((0, 0), test, font=font)[2] > W - 100:
+        if draw.textbbox((0, 0), candidate, font=font)[2] > W - 100:
             if current:
                 lines.append(current)
             current = word
         else:
-            current = test
+            current = candidate
 
     if current:
         lines.append(current)
@@ -312,58 +385,44 @@ def create_scene(sentence, index, credits):
     line_height = 56
     total_height = len(lines) * line_height
     y = (H - total_height) // 2
-    padding = 26
 
     draw.rounded_rectangle(
-        (35, y - padding, W - 35, y + total_height + padding),
+        (35, y - 25, W - 35, y + total_height + 25),
         radius=20,
-        fill=(0, 0, 0, 185),
+        fill=(0, 0, 0, 190),
     )
 
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         x = (W - (bbox[2] - bbox[0])) // 2
 
-        draw.text(
-            (x + 2, y + 3),
-            line,
-            font=font,
-            fill=(0, 0, 0, 255),
-        )
-        draw.text(
-            (x, y),
-            line,
-            font=font,
-            fill=(255, 255, 255, 255),
-        )
+        draw.text((x + 2, y + 3), line, font=font, fill=(0, 0, 0))
+        draw.text((x, y), line, font=font, fill=(255, 255, 255))
         y += line_height
 
     draw.text(
         (30, 35),
         "DARK TALES",
         font=small_font,
-        fill=(230, 200, 200, 255),
+        fill=(230, 200, 200),
     )
 
-    image.convert("RGB").save(
-        FRAMES / f"frame_{index + 1:02d}.png"
-    )
+    image.convert("RGB").save(FRAMES / f"frame_{index + 1:02d}.png")
 
 
 # ==================================================
-# 4. VIDEO MAKEN
+# 6. VIDEO MAKEN
 # ==================================================
 
 def main():
     story = generate_story()
 
-    print("\nStory:")
-    for i, sentence in enumerate(story, 1):
+    print("\nVerhaal:")
+    for i, sentence in enumerate(story, start=1):
         print(f"{i}. {sentence}")
 
-    print("\nCreating English narration...")
-    narration = " ".join(story)
-    gTTS(text=narration, lang="en", slow=False).save(
+    print("\nEngelse vertelling maken...")
+    gTTS(text=" ".join(story), lang="en", slow=False).save(
         "narration.mp3"
     )
 
@@ -373,46 +432,34 @@ def main():
     credits = []
 
     for i, sentence in enumerate(story):
-        print(f"\nCreating scene {i + 1}/{SCENES}...")
+        print(f"\nScène {i + 1}/{SCENES}")
         create_scene(sentence, i, credits)
 
     Path("image-credits.txt").write_text(
-        "\n\n".join(credits) if credits else
-        "No external images were used.",
+        "\n\n".join(credits),
         encoding="utf-8",
     )
 
-    print("\nRendering video...")
-
     command = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel", "error",
+        "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-framerate", f"1/{SECONDS_PER_SCENE}",
         "-i", str(FRAMES / "frame_%02d.png"),
         "-i", "narration.mp3",
-        "-map", "0:v:0",
-        "-map", "1:a:0",
+        "-map", "0:v:0", "-map", "1:a:0",
         "-vf", "fps=30,format=yuv420p",
-        "-c:v", "libx264",
-        "-preset", "medium",
-        "-crf", "23",
-        "-af", "apad",
-        "-t", str(SCENES * SECONDS_PER_SCENE),
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        str(OUT),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+        "-af", "apad", "-t", str(SCENES * SECONDS_PER_SCENE),
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart", str(OUT),
     ]
 
     subprocess.run(command, check=True)
 
     if not OUT.exists() or OUT.stat().st_size == 0:
-        raise RuntimeError("The video was not created correctly.")
+        raise RuntimeError("De video is niet goed aangemaakt.")
 
-    print(f"\nVideo ready: {OUT}")
-    print("Image credits saved to image-credits.txt")
+    print(f"\nVideo klaar: {OUT}")
+    print("Bron- en licentiegegevens staan in image-credits.txt")
 
 
 if __name__ == "__main__":
